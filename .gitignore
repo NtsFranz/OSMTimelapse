@@ -1,0 +1,20 @@
+data/
+output/
+pgdata/
+*.osh.pbf
+*.osm.pbf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Environment variables
+.env
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store

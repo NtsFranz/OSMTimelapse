@@ -1,0 +1,78 @@
+# =============================================================================
+# OSM Timelapse — Docker Compose
+# =============================================================================
+#
+# Usage:
+#   1. Export your OSM credentials:
+#      export OSM_USERNAME="your_username"
+#      export OSM_PASSWORD="your_password"
+#   2. docker compose build
+#   3. docker compose run renderer render
+#      (defaults to Watkinsville, GA — data downloads automatically)
+#
+#   Custom region:
+#   docker compose run renderer render --bbox "west,south,east,north"
+#
+# =============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # PostGIS Database
+  # --------------------------------------------------------------------------
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: gis
+      POSTGRES_USER: renderer
+      POSTGRES_PASSWORD: renderer
+    volumes:
+      # Bind mount for persistent database storage
+      - ./pgdata:/var/lib/postgresql/data
+    # Larger shared memory for osm2pgsql imports
+    shm_size: 512mb
+    # Tune PostgreSQL for import-heavy workloads
+    command: >
+      postgres
+        -c shared_buffers=256MB
+        -c work_mem=64MB
+        -c maintenance_work_mem=256MB
+        -c wal_level=minimal
+        -c max_wal_senders=0
+        -c checkpoint_completion_target=0.9
+        -c random_page_cost=1.1
+        -c effective_cache_size=1GB
+        -c max_connections=20
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U renderer -d gis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --------------------------------------------------------------------------
+  # Renderer (osmium + osm2pgsql + Mapnik + ffmpeg + Python CLI)
+  # --------------------------------------------------------------------------
+  renderer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: renderer
+      PGPASSWORD: renderer
+      PGDATABASE: gis
+      # Pass OSM credentials for downloading from Geofabrik Internal
+      OSM_USERNAME: ${OSM_USERNAME}
+      OSM_PASSWORD: ${OSM_PASSWORD}
+    volumes:
+      # Bind mount: downloaded .osh.pbf files are cached here
+      - ./data:/data
+      # Bind mount: rendered frames and video output
+      - ./output:/output
+    # Default: show help. Override with your command:
+    #   docker compose run renderer render
+    #   docker compose run renderer render --bbox "-83.45,33.83,-83.37,33.90"
+    command: ["--help"]
