@@ -6,13 +6,19 @@ import logging
 import shutil
 import subprocess
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
-from osm_timelapse.config import RenderConfig
+from osm_timelapse.config import RenderConfig, RenderMode
 from osm_timelapse.dates import format_iso, generate_dates
 from osm_timelapse.downloader import ensure_history_data
-from osm_timelapse.tile_math import bbox_to_mercator, compute_pixel_dimensions
+from osm_timelapse.tile_math import (
+    bbox_to_mercator,
+    compute_pixel_dimensions,
+    lonlat_to_tile,
+    tile_to_bbox,
+)
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +56,7 @@ def ensure_data(cfg: RenderConfig) -> Path:
     """
     return ensure_history_data(
         data_dir=cfg.data_dir,
-        bbox=cfg.bbox.to_osmium_arg(),
+        bbox=cfg.buffered_bbox.to_osmium_arg(),
     )
 
 
@@ -144,9 +150,11 @@ def import_snapshot(cfg: RenderConfig, snapshot_file: Path) -> None:
     log.info("Imported %s into PostGIS", snapshot_file)
 
     # Run post-import SQL indexes if they exist
-    indexes_sql = cfg.carto_style_dir / "indexes.sql"
-    if indexes_sql.exists():
-        _run_psql(cfg, indexes_sql)
+    # Note: For small regional extracts, building these indexes takes longer 
+    # than the rendering speedup they provide. Skipping to save ~1s per frame.
+    # indexes_sql = cfg.carto_style_dir / "indexes.sql"
+    # if indexes_sql.exists():
+    #     _run_psql(cfg, indexes_sql)
 
 
 def _run_psql_command(cfg: RenderConfig, sql_cmd: str) -> None:
@@ -201,17 +209,16 @@ def render_frame(cfg: RenderConfig, output_file: Path, m: "mapnik.Map" = None) -
 
     envelope = bbox_to_mercator(cfg.bbox)
 
-    if m is None:
-        # Determine render dimensions
-        width, height = cfg.width, cfg.height
-        if width == 0 or height == 0:
-            width, height = compute_pixel_dimensions(cfg.bbox, cfg.zoom)
+    # Determine target dimensions
+    width, height = cfg.width, cfg.height
+    if width == 0 or height == 0:
+        width, height = compute_pixel_dimensions(cfg.bbox, cfg.zoom)
 
+    if m is None:
         m = mapnik.Map(width, height)
         mapnik.load_map(m, str(cfg.mapnik_xml))
     else:
-        width = m.width
-        height = m.height
+        m.resize(width, height)
 
     # Set the map extent to our bounding box in mercator coordinates
     m.zoom_to_box(
@@ -221,6 +228,106 @@ def render_frame(cfg: RenderConfig, output_file: Path, m: "mapnik.Map" = None) -
     mapnik.render_to_file(m, str(output_file), "png256")
     log.info("Rendered frame: %s (%dx%d)", output_file, width, height)
     return output_file
+
+
+def render_tiles(cfg: RenderConfig, m: "mapnik.Map", snapshot_date: date) -> None:
+    """Render a tile pyramid (XYZ) for the given snapshot and zoom levels.
+
+    Uses a 'meta-tile' approach: rendering multiple tiles in a single larger image
+    to minimize database query overhead, which is the primary bottleneck.
+    """
+    import mapnik
+    from PIL import Image
+    from osm_timelapse.config import BBox
+
+    snapshot_str = snapshot_date.isoformat()
+    # Number of tiles per side in a meta-tile block (e.g., 4x4 = 16 tiles)
+    META_SIZE = 4
+
+    for zoom in cfg.tile_zooms:
+        x1, y1 = lonlat_to_tile(cfg.bbox.west, cfg.bbox.north, zoom)
+        x2, y2 = lonlat_to_tile(cfg.bbox.east, cfg.bbox.south, zoom)
+
+        total_tiles = (x2 - x1 + 1) * (y2 - y1 + 1)
+        log.info("  Zoom %d: Processing %d tiles...", zoom, total_tiles)
+
+        for mx in range(x1, x2 + 1, META_SIZE):
+            for my in range(y1, y2 + 1, META_SIZE):
+                mx_end = min(mx + META_SIZE - 1, x2)
+                my_end = min(my + META_SIZE - 1, y2)
+
+                # Check if we actually need to render anything in this meta-tile
+                needs_render = False
+                for x in range(mx, mx_end + 1):
+                    for y in range(my, my_end + 1):
+                        tile_file = cfg.tiles_dir / snapshot_str / str(zoom) / str(x) / f"{y}.png"
+                        if not tile_file.exists():
+                            needs_render = True
+                            break
+                    if needs_render:
+                        break
+                
+                if not needs_render:
+                    continue
+
+                # Calculate dimensions and bbox for the whole meta-tile
+                tiles_w = (mx_end - mx + 1)
+                tiles_h = (my_end - my + 1)
+
+                bbox_nw = tile_to_bbox(mx, my, zoom)
+                bbox_se = tile_to_bbox(mx_end, my_end, zoom)
+                
+                # Combine into a single meta-bbox
+                meta_bbox = BBox(
+                    west=bbox_nw.west,
+                    south=bbox_se.south,
+                    east=bbox_se.east,
+                    north=bbox_nw.north
+                )
+                envelope = bbox_to_mercator(meta_bbox)
+
+                m.resize(tiles_w * 256, tiles_h * 256)
+                m.zoom_to_box(mapnik.Box2d(envelope.xmin, envelope.ymin, envelope.xmax, envelope.ymax))
+                
+                # Render the large meta-tile
+                meta_img_path = cfg.output_dir / "meta_temp.png"
+                mapnik.render_to_file(m, str(meta_img_path), "png256")
+                
+                # Slice the meta-tile into individual tiles
+                with Image.open(meta_img_path) as meta_img:
+                    for x in range(mx, mx_end + 1):
+                        for y in range(my, my_end + 1):
+                            tile_dir = cfg.tiles_dir / snapshot_str / str(zoom) / str(x)
+                            tile_dir.mkdir(parents=True, exist_ok=True)
+                            tile_file = tile_dir / f"{y}.png"
+                            
+                            if tile_file.exists():
+                                continue
+
+                            left = (x - mx) * 256
+                            top = (y - my) * 256
+                            tile_img = meta_img.crop((left, top, left + 256, top + 256))
+                            tile_img.save(tile_file, "PNG")
+                
+                # Cleanup temp file
+                if meta_img_path.exists():
+                    meta_img_path.unlink()
+
+
+def save_tile_metadata(cfg: RenderConfig, snapshots: list[tuple[date, Path]]) -> None:
+    """Save metadata.json for the web viewer."""
+    import json
+
+    metadata = {
+        "dates": [d.isoformat() for d, _ in snapshots],
+        "center": list(cfg.center),
+        "default_zoom": cfg.zoom,
+        "bbox": [cfg.bbox.west, cfg.bbox.south, cfg.bbox.east, cfg.bbox.north],
+    }
+    metadata_file = cfg.tiles_dir / "metadata.json"
+    with open(metadata_file, "w") as f:
+        json.dump(metadata, f, indent=2)
+    log.info("Saved viewer metadata: %s", metadata_file)
 
 
 def add_watermark(image_path: Path, text: str) -> None:
@@ -396,29 +503,48 @@ def run_full_pipeline(cfg: RenderConfig) -> Path:
 
     for i, (d, snapshot_path) in enumerate(snapshots):
         frame_file = cfg.frames_dir / f"frame_{d.isoformat()}_{cache_key}.png"
-        if frame_file.exists():
+        
+        # In animation mode, we can skip if the single frame already exists.
+        # In tile mode, we enter the loop and let render_tiles handle per-tile caching.
+        if cfg.mode == RenderMode.ANIMATION and frame_file.exists():
             log.info("[%d/%d] Frame exists, skipping: %s", i + 1, len(snapshots), d)
             continue
 
         log.info("[%d/%d] Processing %s ...", i + 1, len(snapshots), d)
+        start_time = time.time()
 
         # Import into PostGIS
         import_snapshot(cfg, snapshot_path)
 
-        # Render frame
-        render_frame(cfg, frame_file, m)
+        if cfg.mode == RenderMode.TILES:
+            render_tiles(cfg, m, d)
+        else:
+            # Render frame
+            render_frame(cfg, frame_file, m)
 
-        # Add watermark
-        if cfg.watermark:
-            label = d.strftime("%B %Y")  # e.g., "January 2015"
-            add_watermark(frame_file, label)
+            # Add watermark
+            if cfg.watermark:
+                label = d.strftime("%B %Y")  # e.g., "January 2015"
+                add_watermark(frame_file, label)
 
-    # Stage 5: Assemble video
-    log.info("")
-    log.info("--- Stage 5: Assembling video ---")
-    video_path = assemble_video(cfg)
+        elapsed = time.time() - start_time
+        log.info("[%d/%d] Done in %.2fs: %s", i + 1, len(snapshots), elapsed, d)
 
-    log.info("")
-    log.info("=== Pipeline complete! ===")
-    log.info("Video: %s", video_path)
-    return video_path
+    # Generate metadata for the web viewer
+    if cfg.mode == RenderMode.TILES:
+        save_tile_metadata(cfg, snapshots)
+
+    # Stage 6: Assemble video (Animation mode only)
+    if cfg.mode == RenderMode.ANIMATION:
+        log.info("")
+        log.info("--- Stage 6: Assembling video ---")
+        video_path = assemble_video(cfg)
+        log.info("")
+        log.info("=== Pipeline complete! ===")
+        log.info("Video: %s", video_path)
+        return video_path
+    else:
+        log.info("")
+        log.info("=== Pipeline complete! ===")
+        log.info("Tiles generated in: %s", cfg.tiles_dir)
+        return cfg.tiles_dir

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from datetime import date
+from enum import Enum, auto
 from pathlib import Path
 
 
@@ -15,6 +16,11 @@ DEFAULT_RADIUS_KM = 2.0
 # Default date range
 DEFAULT_START_DATE = date(2008, 1, 1)
 DEFAULT_END_DATE = date(2024, 1, 1)
+
+
+class RenderMode(Enum):
+    ANIMATION = auto()
+    TILES = auto()
 
 
 @dataclass
@@ -91,6 +97,7 @@ class RenderConfig:
     center: tuple[float, float] = DEFAULT_CENTER
     radius_km: float = DEFAULT_RADIUS_KM
     bbox: BBox = field(init=False)
+    buffered_bbox: BBox = field(init=False)
 
     # Time range
     start_date: date = DEFAULT_START_DATE
@@ -109,6 +116,9 @@ class RenderConfig:
     snapshots_dir: Path = field(init=False)
     output_video: Path = Path("/output/timelapse.mp4")
     fps: int = 10
+    mode: RenderMode = RenderMode.ANIMATION
+    tile_zooms: list[int] = field(default_factory=lambda: [13, 14, 15, 16])
+    tiles_dir: Path = field(init=False)
 
     # Database
     db: DatabaseConfig = field(default_factory=DatabaseConfig)
@@ -118,6 +128,11 @@ class RenderConfig:
         """Generate a unique cache key based on render parameters."""
         return f"c{self.center[0]}_{self.center[1]}_r{self.radius_km}_z{self.zoom}_{self.width}x{self.height}_wm{int(self.watermark)}"
 
+    @property
+    def location_key(self) -> str:
+        """Generate a unique key based only on the geographic location."""
+        return f"c{self.center[0]}_{self.center[1]}_r{self.radius_km}"
+
     # Paths inside the renderer container
     carto_style_dir: Path = Path("/opt/openstreetmap-carto")
     mapnik_xml: Path = Path("/opt/openstreetmap-carto/mapnik.xml")
@@ -126,9 +141,18 @@ class RenderConfig:
 
     def __post_init__(self) -> None:
         self.bbox = BBox.from_center(self.center[0], self.center[1], self.radius_km)
+        # Extract 1.5km extra in all directions to ensure perfect tiles at the edges
+        # (Mapnik labels and icons need a buffer around the render area)
+        self.buffered_bbox = BBox.from_center(self.center[0], self.center[1], self.radius_km + 1.5)
+        
         self.frames_dir = self.output_dir / "frames"
-        self.snapshots_dir = self.output_dir / "snapshots"
+        self.snapshots_dir = self.output_dir / "snapshots" / self.location_key
+        # Tiles are global (WGS84 XYZ) and can be shared across regions safely
+        # because the buffered extraction ensures they are 'perfect'.
+        self.tiles_dir = self.output_dir / "tiles"
+        
         self.frames_dir.mkdir(parents=True, exist_ok=True)
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
+        self.tiles_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
 

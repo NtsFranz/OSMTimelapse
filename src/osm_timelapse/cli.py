@@ -38,6 +38,16 @@ def _parse_date(ctx, param, value: str | None) -> date | None:
     return date.fromisoformat(value)
 
 
+def _parse_zooms(ctx, param, value: str) -> list[int]:
+    if "-" in value:
+        try:
+            start, end = map(int, value.split("-"))
+            return list(range(start, end + 1))
+        except ValueError:
+            raise click.BadParameter("Zooms must be in format '13-16' or '13,14,15'")
+    return [int(x.strip()) for x in value.split(",")]
+
+
 @click.group()
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 @click.pass_context
@@ -85,6 +95,8 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 @click.option("--fps", type=int, default=10, help="Frames per second in output video.")
 @click.option("--output", type=click.Path(), default=None, help="Output video path. If not provided, defaults to /output/timelapse_[params].mp4")
 @click.option("--no-watermark", is_flag=True, help="Disable date watermark on frames.")
+@click.option("--tiles", is_flag=True, help="Render map tiles (XYZ) instead of animation.")
+@click.option("--tile-zooms", callback=_parse_zooms, default="13-16", help="Zoom range for tiles (e.g. 13-16).")
 @click.option("--data-dir", type=click.Path(), default="/data", help="Data directory for downloads and cache.")
 def render(
     center: tuple[float, float],
@@ -98,6 +110,8 @@ def render(
     fps: int,
     output: str | None,
     no_watermark: bool,
+    tiles: bool,
+    tile_zooms: list[int],
     data_dir: str,
 ) -> None:
     """Run the full timelapse pipeline.
@@ -108,6 +122,7 @@ def render(
 
     Just specify a --bbox and the tool handles everything else.
     """
+    from osm_timelapse.config import RenderMode
     from osm_timelapse.pipeline import run_full_pipeline
 
     cfg = RenderConfig(
@@ -122,6 +137,8 @@ def render(
         height=height,
         fps=fps,
         watermark=not no_watermark,
+        mode=RenderMode.TILES if tiles else RenderMode.ANIMATION,
+        tile_zooms=tile_zooms,
     )
     if output is None:
         cfg.output_video = Path(f"/output/timelapse_{cfg.cache_key}.mp4")

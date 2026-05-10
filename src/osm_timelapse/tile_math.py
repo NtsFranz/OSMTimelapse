@@ -74,3 +74,27 @@ def compute_pixel_dimensions(
     height = max(height, tile_size)
 
     return width, height
+
+
+def lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[int, int]:
+    """Convert lon/lat to integer tile coordinates at a given zoom."""
+    lat_rad = math.radians(lat)
+    n = 2.0**zoom
+    xtile = int((lon + 180.0) / 360.0 * n)
+    ytile = int((1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n)
+    return xtile, ytile
+
+
+def tile_to_bbox(x: int, y: int, zoom: int) -> BBox:
+    """Returns the WGS84 bounding box for a given XYZ tile."""
+    n = 2.0**zoom
+    lon_west = x / n * 360.0 - 180.0
+    lon_east = (x + 1) / n * 360.0 - 180.0
+    lat_north_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
+    lat_south_rad = math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n)))
+    return BBox(
+        west=lon_west,
+        south=math.degrees(lat_south_rad),
+        east=lon_east,
+        north=math.degrees(lat_north_rad),
+    )

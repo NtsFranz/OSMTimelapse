@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSM Historical Tile Viewer</title>
+    <link href='https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css' rel='stylesheet' />
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: rgba(30, 41, 59, 0.8);
+            --accent-color: #38bdf8;
+            --text-color: #f8fafc;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            background: #000;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 800px;
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 20px 30px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 1000;
+        }
+
+        .info {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-color);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        p {
+            margin: 0;
+            font-size: 14px;
+            opacity: 0.8;
+            font-family: monospace;
+        }
+
+        .slider-container {
+            width: 100%;
+        }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+
+        input[type=range]:focus {
+            outline: none;
+        }
+
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 8px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            height: 24px;
+            width: 24px;
+            border-radius: 50%;
+            background: var(--accent-color);
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -8px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+            transition: transform 0.1s ease;
+        }
+
+        input[type=range]:active::-webkit-slider-thumb {
+            transform: scale(1.2);
+        }
+
+        /* MapLibre overrides */
+        .maplibregl-ctrl-attrib {
+            background: rgba(0,0,0,0.5) !important;
+            color: #ccc !important;
+        }
+        .maplibregl-ctrl-attrib a {
+            color: var(--accent-color) !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="controls">
+        <div class="info">
+            <div>
+                <p>HISTORICAL TIMELINE</p>
+                <h1 id="current-date">Loading...</h1>
+            </div>
+            <p id="location">Loading coordinates...</p>
+        </div>
+        <div class="slider-container">
+            <input type="range" id="time-slider" min="0" max="0" value="0">
+        </div>
+    </div>
+
+    <script src='https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js'></script>
+    <script>
+        // Configuration
+        const METADATA_URL = "../tiles/metadata.json";
+
+        let dates = [];
+        let map;
+
+        async function init() {
+            let center = [33.8824, -83.4351]; // Default (Watkinsville)
+            let zoom = 15;
+
+            try {
+                // Try to load metadata
+                const response = await fetch(METADATA_URL);
+                if (response.ok) {
+                    const metadata = await response.json();
+                    dates = metadata.dates;
+                    center = metadata.center;
+                    zoom = metadata.default_zoom || 15;
+                } else {
+                    throw new Error("Metadata not found");
+                }
+            } catch (err) {
+                console.warn("Metadata not found or failed to load. Falling back to URL parameters or defaults.");
+                
+                // Fallback to URL parameters
+                const params = new URLSearchParams(window.location.search);
+                const startStr = params.get('start') || '2010-01-01';
+                const endStr = params.get('end') || new Date().toISOString().split('T')[0];
+                
+                const lat = parseFloat(params.get('lat'));
+                const lon = parseFloat(params.get('lon'));
+                if (!isNaN(lat) && !isNaN(lon)) center = [lat, lon];
+                
+                const z = parseInt(params.get('zoom'));
+                if (!isNaN(z)) zoom = z;
+
+                // Generate a monthly sequence between start and end
+                dates = generateMonthlyDates(startStr, endStr);
+            }
+
+            if (dates.length === 0) {
+                document.getElementById('current-date').textContent = "No tiles found";
+                return;
+            }
+
+            document.getElementById('location').textContent = `LAT: ${center[0].toFixed(4)} LON: ${center[1].toFixed(4)}`;
+            
+            const slider = document.getElementById('time-slider');
+            slider.max = dates.length - 1;
+            slider.value = dates.length - 1;
+
+            map = new maplibregl.Map({
+                container: 'map',
+                style: {
+                    version: 8,
+                    sources: {
+                        'osm': {
+                            type: 'raster',
+                            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                            tileSize: 256,
+                            attribution: '&copy; OpenStreetMap contributors'
+                        },
+                        'historical': {
+                            type: 'raster',
+                            tiles: [getTileUrl(dates[dates.length - 1])],
+                            tileSize: 256
+                        }
+                    },
+                    layers: [
+                        {
+                            id: 'osm-layer',
+                            type: 'raster',
+                            source: 'osm',
+                            paint: { 'raster-opacity': 0.3 }
+                        },
+                        {
+                            id: 'historical-layer',
+                            type: 'raster',
+                            source: 'historical'
+                        }
+                    ]
+                },
+                center: [center[1], center[0]],
+                zoom: zoom
+            });
+
+            updateDisplay(dates.length - 1);
+
+            slider.addEventListener('input', (e) => {
+                const idx = parseInt(e.target.value);
+                updateDisplay(idx);
+            });
+        }
+
+        function generateMonthlyDates(startStr, endStr) {
+            const result = [];
+            let current = new Date(startStr);
+            const end = new Date(endStr);
+            
+            // Normalize to first of month
+            current.setUTCDate(1);
+            
+            while (current <= end) {
+                result.push(current.toISOString().split('T')[0]);
+                current.setUTCMonth(current.getUTCMonth() + 1);
+            }
+            return result;
+        }
+
+        function getTileUrl(date) {
+            // Using relative paths allows the viewer to work across different origins 
+            // and directory structures (assuming tiles/ is a sibling of viewer/)
+            return `../tiles/${date}/{z}/{x}/{y}.png`;
+        }
+
+        function updateDisplay(idx) {
+            const date = dates[idx];
+            document.getElementById('current-date').textContent = formatDate(date);
+            
+            if (map && map.getSource('historical')) {
+                const newUrl = getTileUrl(date);
+                map.getSource('historical').setTiles([newUrl]);
+            }
+        }
+
+        function formatDate(dateStr) {
+            const d = new Date(dateStr);
+            return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).toUpperCase();
+        }
+
+        init();
+    </script>
+</body>
+</html>
