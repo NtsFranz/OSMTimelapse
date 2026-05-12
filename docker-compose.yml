@@ -3,15 +3,11 @@
 # =============================================================================
 #
 # Usage:
-#   1. Export your OSM credentials:
-#      export OSM_USERNAME="your_username"
-#      export OSM_PASSWORD="your_password"
-#   2. docker compose build
-#   3. docker compose run renderer render
-#      (defaults to Manhattan, NY — data downloads automatically)
-#
-#   Custom region:
-#   docker compose run renderer render --bbox "west,south,east,north"
+#   1. Configure your OSM credentials in a .env file:
+#      cp .env.example .env
+#   2. Build and Run:
+#      docker compose build
+#      docker compose run renderer wizard
 #
 # =============================================================================
 
@@ -58,6 +54,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file: .env
     environment:
       PGHOST: db
       PGPORT: "5432"
@@ -76,3 +73,33 @@ services:
     #   docker compose run renderer render
     #   docker compose run renderer render --bbox "-74.02,40.70,-73.90,40.85"
     command: ["--help"]
+
+  # --------------------------------------------------------------------------
+  # Web Viewer (SvelteKit)
+  # --------------------------------------------------------------------------
+  viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: renderer
+      PGPASSWORD: renderer
+      PGDATABASE: gis
+      OSM_USERNAME: ${OSM_USERNAME}
+      OSM_PASSWORD: ${OSM_PASSWORD}
+      IS_DOCKER_CONTAINER: "true"
+    volumes:
+      - ./data:/data
+      - ./output:/output
+      - ./viewer:/app/viewer
+      - /app/viewer/node_modules
+    ports:
+      - "3000:3000"
+    working_dir: /app/viewer
+    entrypoint: ["bun", "run", "dev", "--host", "0.0.0.0"]

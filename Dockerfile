@@ -68,6 +68,12 @@ RUN python3 scripts/get-external-data.py || \
 RUN carto project.mml > mapnik.xml
 
 # ---------------------------------------------------------------------------
+# Install Bun (for the SvelteKit viewer)
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+# ---------------------------------------------------------------------------
 # Install uv and set up the Python project
 # ---------------------------------------------------------------------------
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -80,8 +86,20 @@ COPY src/ ./src/
 RUN uv venv --python /usr/bin/python3 --system-site-packages && uv sync --no-dev
 
 # ---------------------------------------------------------------------------
+# Prepare the SvelteKit viewer
+# ---------------------------------------------------------------------------
+WORKDIR /app/viewer
+COPY viewer/package.json viewer/bun.lock* ./
+RUN bun install
+COPY viewer/ ./
+# Build the viewer (optional if running in dev mode via compose)
+# RUN bun run build
+
+WORKDIR /app
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
-# Make the CLI available via uv run
+# Default entrypoint for renderer. For viewer, override in docker-compose.
 ENTRYPOINT ["uv", "run", "osm-timelapse"]
 CMD ["--help"]

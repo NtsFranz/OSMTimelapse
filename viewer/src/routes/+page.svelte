@@ -373,6 +373,7 @@
 
 	input[type='range'] {
 		-webkit-appearance: none;
+		appearance: none;
 		width: 100%;
 		background: transparent;
 	}

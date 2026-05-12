@@ -315,6 +315,12 @@ def render_tiles(cfg: RenderConfig, m: "mapnik.Map", snapshot_date: date) -> Non
                 needs_render = False
                 for x in range(mx, mx_end + 1):
                     for y in range(my, my_end + 1):
+                        # Only render tiles that are fully enclosed in our data extent
+                        # to avoid partial tiles with missing features at the edges.
+                        tile_bbox = tile_to_bbox(x, y, zoom)
+                        if not cfg.buffered_bbox.contains(tile_bbox):
+                            continue
+
                         tile_file = (
                             cfg.tiles_dir
                             / snapshot_str
@@ -366,6 +372,11 @@ def render_tiles(cfg: RenderConfig, m: "mapnik.Map", snapshot_date: date) -> Non
                 # Slice the meta-tile into individual tiles
                 for x in range(mx, mx_end + 1):
                     for y in range(my, my_end + 1):
+                        # Skip tiles not fully enclosed in our data extent
+                        tile_bbox = tile_to_bbox(x, y, zoom)
+                        if not cfg.buffered_bbox.contains(tile_bbox):
+                            continue
+
                         tile_dir = cfg.tiles_dir / snapshot_str / str(zoom) / str(x)
                         tile_dir.mkdir(parents=True, exist_ok=True)
                         tile_file = tile_dir / f"{y}.png"
@@ -454,12 +465,18 @@ def assemble_video(cfg: RenderConfig) -> Path:
 
     cache_key = cfg.cache_key
 
-    # Frames are named frame_YYYY-MM-DD_CACHEKEY.png — sort by name for chronological order
-    pattern = str(cfg.frames_dir / f"frame_*_{cache_key}.png")
 
     # Build a concat file for ffmpeg (more reliable than glob with varying names)
-    concat_file = cfg.output_dir / "frames.txt"
-    frame_files = sorted(cfg.frames_dir.glob(f"frame_*_{cache_key}.png"))
+    concat_file = cfg.output_dir / f"concat_{cache_key}.txt"
+    
+    # Use iterdir instead of glob as pathlib.glob can sometimes fail on Docker for Windows bind mounts
+    frame_files = []
+    if cfg.frames_dir.exists():
+        frame_files = sorted([
+            f for f in cfg.frames_dir.iterdir()
+            if f.is_file() and f.name.startswith("frame_") and f.name.endswith(".png")
+        ])
+
     if not frame_files:
         log.error("No frames found in %s", cfg.frames_dir)
         sys.exit(1)
@@ -544,13 +561,8 @@ def run_full_pipeline(cfg: RenderConfig) -> Path:
     5. Assemble into video
 
     """
-    # Add file logging
-    log_file = cfg.output_video.with_name(f"timelapse_{cfg.cache_key}.log")
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
-    )
-    logging.getLogger().addHandler(file_handler)
+    # We rely on the caller (CLI or Web API) to capture stdout/stderr.
+    # No file handler here to prevent duplicate log files.
 
     log.info("=== OSM Timelapse Pipeline ===")
     log.info("Region: %s", cfg.bbox)
@@ -596,13 +608,8 @@ def run_full_pipeline(cfg: RenderConfig) -> Path:
     mapnik.load_map(m, str(cfg.mapnik_xml))
 
     for i, (d, snapshot_path) in enumerate(snapshots):
-        frame_file = cfg.frames_dir / f"frame_{d.isoformat()}_{cache_key}.png"
+        frame_file = cfg.frames_dir / f"frame_{d.isoformat()}.png"
 
-        # In animation mode, we can skip if the single frame already exists.
-        # In tile mode, we enter the loop and let render_tiles handle per-tile caching.
-        if cfg.mode == RenderMode.ANIMATION and frame_file.exists():
-            log.info("[%d/%d] Frame exists, skipping: %s", i + 1, len(snapshots), d)
-            continue
 
         log.info("[%d/%d] Processing %s ...", i + 1, len(snapshots), d)
         start_time = time.time()

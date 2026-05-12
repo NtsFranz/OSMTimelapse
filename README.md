@@ -5,19 +5,21 @@ Create historical timelapse animations of OpenStreetMap editing progress over ti
 ## Quick Start
 
 ```bash
-# 1. Export your OpenStreetMap credentials (required for Geofabrik internal data)
-export OSM_USERNAME="your_username"
-export OSM_PASSWORD="your_password"
+# 1. Configure your OpenStreetMap credentials (required for Geofabrik internal data)
+cp .env.example .env
+# Edit .env and set your OSM_USERNAME and OSM_PASSWORD
 
-# 2. Build and Run! (defaults to Manhattan, NY — monthly from 2008 to 2026)
-docker compose build
+# 2. Build and Run!
+docker compose up -d --build
 
-# Use the interactive wizard (Recommended)
-docker compose run renderer wizard
-
-# OR run with defaults
-docker compose run renderer render
+# 3. Access the Web Interface
+# Open http://localhost:3000 in your browser
 ```
+
+The web interface allows you to:
+- **View existing timelapses** on an interactive map.
+- **Generate new timelapses/tiles** by picking coordinates on a map.
+- **Browse and download** generated MP4 animations.
 
 That's it. The tool will:
 - Download the New York state history file into `./data/` (resumable, cached)

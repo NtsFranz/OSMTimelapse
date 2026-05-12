@@ -63,6 +63,15 @@ class BBox:
         """Format for osmium extract --bbox."""
         return f"{self.west},{self.south},{self.east},{self.north}"
 
+    def contains(self, other: BBox) -> bool:
+        """Check if another BBox is fully enclosed within this one."""
+        return (
+            other.west >= self.west
+            and other.east <= self.east
+            and other.south >= self.south
+            and other.north <= self.north
+        )
+
 
 @dataclass
 class DatabaseConfig:
@@ -146,7 +155,7 @@ class RenderConfig:
             self.center[0], self.center[1], self.radius_km + 1.5
         )
 
-        self.frames_dir = self.output_dir / "frames"
+        self.frames_dir = self.output_dir / "frames" / self.cache_key
         self.snapshots_dir = self.output_dir / "snapshots" / self.location_key
         # Tiles are global (WGS84 XYZ) and can be shared across regions safely
         # because the buffered extraction ensures they are 'perfect'.
