@@ -9,13 +9,13 @@ from enum import Enum, auto
 from pathlib import Path
 
 
-# Default center: Watkinsville, GA, USA
-DEFAULT_CENTER = (33.835, -83.41)
+# Default center: Manhattan, NY, USA
+DEFAULT_CENTER = (40.758, -73.985)
 DEFAULT_RADIUS_KM = 2.0
 
 # Default date range
 DEFAULT_START_DATE = date(2008, 1, 1)
-DEFAULT_END_DATE = date(2024, 1, 1)
+DEFAULT_END_DATE = date(2026, 1, 1)
 
 
 class RenderMode(Enum):
@@ -102,7 +102,7 @@ class RenderConfig:
     interval: str = "monthly"  # daily, weekly, monthly, quarterly, yearly
 
     # Rendering
-    zoom: int = 13
+    zoom: int | None = None
     width: int = 1920
     height: int = 1080
     watermark: bool = True
@@ -123,7 +123,8 @@ class RenderConfig:
     @property
     def cache_key(self) -> str:
         """Generate a unique cache key based on render parameters."""
-        return f"c{self.center[0]}_{self.center[1]}_r{self.radius_km}_z{self.zoom}_{self.width}x{self.height}_wm{int(self.watermark)}"
+        zoom_part = f"_z{self.zoom}" if self.zoom is not None else ""
+        return f"c{self.center[0]}_{self.center[1]}_r{self.radius_km}{zoom_part}_{self.width}x{self.height}_wm{int(self.watermark)}"
 
     @property
     def location_key(self) -> str:
@@ -133,6 +134,7 @@ class RenderConfig:
     # Paths inside the renderer container
     carto_style_dir: Path = Path("/opt/openstreetmap-carto")
     mapnik_xml: Path = Path("/opt/openstreetmap-carto/mapnik.xml")
+    osm2pgsql_style: Path = Path("/opt/openstreetmap-carto/openstreetmap-carto.style")
     osm2pgsql_lua: Path = Path("/opt/openstreetmap-carto/openstreetmap-carto-flex.lua")
     flat_nodes: Path = Path("/tmp/flat-nodes.bin")
 

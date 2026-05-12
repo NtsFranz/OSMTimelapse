@@ -43,6 +43,20 @@ def _require_tool(name: str) -> None:
         sys.exit(1)
 
 
+def _run_with_spinner(title: str, cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
+    """Run a command with a 'gum spin' spinner, without logging the internal command."""
+    if shutil.which("gum") is None:
+        return _run(cmd, **kwargs)
+
+    # Wrap the command in 'gum spin'
+    spin_cmd = ["gum", "spin", "--spinner", "dot", "--title", title, "--"] + cmd
+    
+    # We don't log the internal command here to keep the output clean
+    return subprocess.run(spin_cmd, check=True, **kwargs)
+
+
+
+
 # ---------------------------------------------------------------------------
 # Stage 1: Ensure data is available (download + extract if needed)
 # ---------------------------------------------------------------------------
@@ -92,6 +106,7 @@ def generate_snapshot(
         str(output_file),
         "--overwrite",
     ]
+    log.info("Creating snapshot for %s...", iso)
     _run(cmd)
     log.info("Snapshot created for %s: %s", target_date, output_file)
     return output_file
@@ -133,6 +148,19 @@ def import_snapshot(cfg: RenderConfig, snapshot_file: Path) -> None:
     """
     _require_tool("osm2pgsql")
 
+    if not snapshot_file.exists():
+        log.error("Snapshot file not found: %s", snapshot_file)
+        sys.exit(1)
+    
+    size_mb = snapshot_file.stat().st_size / (1024 * 1024)
+    log.info("Snapshot file size: %.2f MB", size_mb)
+    if size_mb < 0.001:
+        log.warning("Snapshot file is nearly empty! This might be why the output is blank.")
+
+    if not cfg.osm2pgsql_lua.exists():
+        log.error("osm2pgsql lua script not found: %s", cfg.osm2pgsql_lua)
+        sys.exit(1)
+
     cmd = [
         "osm2pgsql",
         "-O",
@@ -157,6 +185,7 @@ def import_snapshot(cfg: RenderConfig, snapshot_file: Path) -> None:
     env = dict(__import__("os").environ)
     env["PGPASSWORD"] = cfg.db.password
 
+    log.info("Importing %s to DB using flex mode...", snapshot_file.name)
     _run(cmd, env=env)
     log.info("Imported %s into PostGIS", snapshot_file)
 
@@ -232,8 +261,12 @@ def render_frame(cfg: RenderConfig, output_file: Path, m: "mapnik.Map" = None) -
 
     # Determine target dimensions
     width, height = cfg.width, cfg.height
-    if width == 0 or height == 0:
+    if (width == 0 or height == 0) and cfg.zoom is not None:
         width, height = compute_pixel_dimensions(cfg.bbox, cfg.zoom)
+    
+    # Defaults if still 0
+    if width == 0: width = 1920
+    if height == 0: height = 1080
 
     if m is None:
         m = mapnik.Map(width, height)
@@ -384,19 +417,23 @@ def add_watermark(image_path: Path, text: str) -> None:
         font = ImageFont.load_default()
 
     # Semi-transparent background for readability
+    # Use a fixed width based on the longest possible date string to prevent the box from shifting
+    sample_text = "September 2026"  # Longest month + likely year
+    sample_bbox = draw.textbbox((0, 0), sample_text, font=font)
+    box_w = (sample_bbox[2] - sample_bbox[0]) + 20
+    
     text_bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = text_bbox[2] - text_bbox[0]
     text_h = text_bbox[3] - text_bbox[1]
+    
     padding = 10
     x = padding
     y = img.height - text_h - padding * 2
 
-    # Draw background rectangle
+    # Draw background rectangle with fixed width
     draw.rectangle(
-        [x - padding, y - padding, x + text_w + padding, y + text_h + padding],
+        [0, y - padding, box_w, img.height],
         fill=(0, 0, 0, 180),
     )
-    # Draw text
     draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
 
     img.save(image_path)
@@ -518,7 +555,7 @@ def run_full_pipeline(cfg: RenderConfig) -> Path:
     log.info("=== OSM Timelapse Pipeline ===")
     log.info("Region: %s", cfg.bbox)
     log.info("Date range: %s to %s (%s)", cfg.start_date, cfg.end_date, cfg.interval)
-    log.info("Zoom: %d, Resolution: %dx%d", cfg.zoom, cfg.width, cfg.height)
+    log.info("Zoom: %s, Resolution: %dx%d", cfg.zoom or "Auto", cfg.width, cfg.height)
     log.info("Output: %s", cfg.output_video)
     log.info("Log file: %s", log_file)
 
@@ -548,8 +585,12 @@ def run_full_pipeline(cfg: RenderConfig) -> Path:
     import mapnik
 
     width, height = cfg.width, cfg.height
-    if width == 0 or height == 0:
+    if (width == 0 or height == 0) and cfg.zoom is not None:
         width, height = compute_pixel_dimensions(cfg.bbox, cfg.zoom)
+    
+    # Defaults if still 0
+    if width == 0: width = 1920
+    if height == 0: height = 1080
     log.info("Pre-loading Mapnik XML style...")
     m = mapnik.Map(width, height)
     mapnik.load_map(m, str(cfg.mapnik_xml))

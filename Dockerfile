@@ -15,7 +15,7 @@ ENV LANG=C.UTF-8
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Build essentials
-    ca-certificates curl wget git unzip \
+    ca-certificates curl wget git unzip gnupg \
     # PostgreSQL client (for psql)
     postgresql-client \
     # osmium
@@ -37,6 +37,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Shape file tools
     gdal-bin \
     && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Install gum (interactive CLI tool)
+# ---------------------------------------------------------------------------
+RUN GUM_VERSION=$(curl -s https://api.github.com/repos/charmbracelet/gum/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/') \
+    && curl -fsSL "https://github.com/charmbracelet/gum/releases/download/v${GUM_VERSION}/gum_${GUM_VERSION}_amd64.deb" -o gum.deb \
+    && apt-get install -y ./gum.deb \
+    && rm gum.deb
 
 # ---------------------------------------------------------------------------
 # Install carto (CartoCSS → Mapnik XML compiler)

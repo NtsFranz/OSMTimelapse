@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from osm_timelapse.config import BBox, RenderConfig
+from osm_timelapse.wizard import interactive_wizard, is_gum_available
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -58,13 +59,17 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
 
+    # If no command is provided, and we are in a TTY, suggest the wizard
+    if ctx.invoked_subcommand is None and sys.stdin.isatty() and is_gum_available():
+        click.echo("Tip: Run 'osm-timelapse wizard' for an interactive setup experience.\n")
+
 
 @cli.command()
 @click.option(
     "--center",
     callback=_parse_center,
     default=None,
-    help="Center point: lat,lon. Default: Watkinsville, GA.",
+    help="Center point: lat,lon. Default: Manhattan, NY.",
 )
 @click.option(
     "--radius",
@@ -81,7 +86,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 @click.option(
     "--end-date",
     callback=_parse_date,
-    default="2024-01-01",
+    default="2026-01-01",
     help="End date (YYYY-MM-DD).",
 )
 @click.option(
@@ -90,7 +95,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     default="monthly",
     help="Time step interval.",
 )
-@click.option("--zoom", type=int, default=13, help="Map zoom level.")
+@click.option("--zoom", type=int, default=None, help="Map zoom level.")
 @click.option("--width", type=int, default=1920, help="Frame width in pixels.")
 @click.option("--height", type=int, default=1080, help="Frame height in pixels.")
 @click.option("--fps", type=int, default=10, help="Frames per second in output video.")
@@ -122,7 +127,7 @@ def render(
     start_date: date,
     end_date: date,
     interval: str,
-    zoom: int,
+    zoom: int | None,
     width: int,
     height: int,
     fps: int,
@@ -162,6 +167,60 @@ def render(
         cfg.output_video = Path(f"/output/timelapse_{cfg.cache_key}.mp4")
     else:
         cfg.output_video = Path(output)
+
+    run_full_pipeline(cfg)
+
+
+@cli.command()
+def wizard() -> None:
+    """Run an interactive setup wizard to configure and run the pipeline."""
+    params = interactive_wizard()
+
+    # Create config from wizard params
+    from osm_timelapse.config import RenderMode
+    from osm_timelapse.pipeline import run_full_pipeline
+
+    # Handle defaults or overrides from wizard
+    center_raw = params.get("center")
+    if center_raw:
+        center = _parse_center(None, None, center_raw)
+    else:
+        center = RenderConfig.center
+
+    cfg = RenderConfig(
+        center=center,
+        radius_km=params.get("radius", 2.0),
+        start_date=_parse_date(None, None, params.get("start_date", "2008-01-01")),
+        end_date=_parse_date(None, None, params.get("end_date", "2026-01-01")),
+        interval=params.get("interval", "monthly"),
+        zoom=params.get("zoom"),
+        width=params.get("width", 1920),
+        height=params.get("height", 1080),
+        fps=params.get("fps", 10),
+        watermark=not params.get("no_watermark", False),
+    )
+
+    if "bbox" in params:
+        cfg.bbox = BBox.from_string(params["bbox"])
+        # Buffer it
+        cfg.buffered_bbox = BBox.from_center(
+            (cfg.bbox.north + cfg.bbox.south) / 2,
+            (cfg.bbox.east + cfg.bbox.west) / 2,
+            max(cfg.bbox.north - cfg.bbox.south, cfg.bbox.east - cfg.bbox.west) * 111 / 2 + 1.5
+        )
+        # Note: BBox.from_center is better but we'll let __post_init__ or similar handle it if possible.
+        # Actually RenderConfig.__post_init__ recalculates bbox from center/radius.
+        # So we should probably set center/radius from bbox if bbox is provided.
+        # But for now, let's just use the center of the bbox.
+        cfg.center = ((cfg.bbox.north + cfg.bbox.south) / 2, (cfg.bbox.east + cfg.bbox.west) / 2)
+        # Recalculate radius to cover the bbox
+        import math
+        lat_diff = (cfg.bbox.north - cfg.bbox.south) * 111.32 / 2
+        lon_diff = (cfg.bbox.east - cfg.bbox.west) * (111.32 * math.cos(math.radians(cfg.center[0]))) / 2
+        cfg.radius_km = max(lat_diff, lon_diff)
+        cfg.__post_init__() # Refresh bboxes
+
+    cfg.output_video = Path(f"/output/timelapse_{cfg.cache_key}.mp4")
 
     run_full_pipeline(cfg)
 
@@ -242,7 +301,7 @@ def import_cmd(input_file: str) -> None:
     "--center", callback=_parse_center, default=None, help="Center point: lat,lon."
 )
 @click.option("--radius", type=float, default=2.0, help="Radius in km.")
-@click.option("--zoom", type=int, default=13, help="Zoom level.")
+@click.option("--zoom", type=int, default=None, help="Zoom level.")
 @click.option("--width", type=int, default=1920, help="Frame width.")
 @click.option("--height", type=int, default=1080, help="Frame height.")
 @click.option("--output", type=click.Path(), required=True, help="Output PNG path.")
@@ -250,7 +309,7 @@ def import_cmd(input_file: str) -> None:
 def render_frame_cmd(
     center: tuple[float, float],
     radius: float,
-    zoom: int,
+    zoom: int | None,
     width: int,
     height: int,
     output: str,

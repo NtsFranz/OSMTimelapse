@@ -2,6 +2,32 @@
 
 Create historical timelapse animations of OpenStreetMap editing progress over time, rendered with the exact standard OSM tile style.
 
+## Quick Start
+
+```bash
+# 1. Export your OpenStreetMap credentials (required for Geofabrik internal data)
+export OSM_USERNAME="your_username"
+export OSM_PASSWORD="your_password"
+
+# 2. Build and Run! (defaults to Manhattan, NY — monthly from 2008 to 2026)
+docker compose build
+
+# Use the interactive wizard (Recommended)
+docker compose run renderer wizard
+
+# OR run with defaults
+docker compose run renderer render
+```
+
+That's it. The tool will:
+- Download the New York state history file into `./data/` (resumable, cached)
+- Extract the Manhattan region into a much smaller file
+- Generate ~192 monthly snapshots
+- Import and render each one
+- Output `./output/timelapse.mp4`
+
+---
+
 ## How It Works
 
 ```
@@ -29,30 +55,7 @@ Planet History ──► Region ──► Snapshot ──► PostGIS ──► M
 - An **OpenStreetMap Account** (required to download full-history regional data)
 - Disk space (a few GB for regional data and frames)
 
-## Quick Start
-
-```bash
-# 1. Export your OpenStreetMap credentials (required for Geofabrik internal data)
-export OSM_USERNAME="your_username"
-export OSM_PASSWORD="your_password"
-
-# 2. Clone and build
-git clone <repo-url>
-cd OSMTimelapse
-docker compose build
-
-# 3. Run! (defaults to Watkinsville, GA — monthly from 2008 to 2024)
-docker compose run renderer render
-```
-
-That's it. The tool will:
-- Download the Georgia state history file into `./data/` (resumable, cached)
-- Extract the Watkinsville region into a much smaller file
-- Generate ~192 monthly snapshots
-- Import and render each one
-- Output `./output/timelapse.mp4`
-
-### Custom Region
+## Custom Regions
 
 ```bash
 # Specify any bounding box
@@ -70,7 +73,7 @@ If you want to download the data separately (e.g., overnight):
 
 ```bash
 # Download planet history and extract region (can be interrupted and resumed)
-docker compose run renderer download --bbox "-83.45,33.83,-83.37,33.90"
+docker compose run renderer download --bbox "-74.02,40.70,-73.90,40.85"
 
 # Then render later — it will use the cached data
 docker compose run renderer render
@@ -82,7 +85,7 @@ If you already have a `.osh.pbf` file (e.g., you downloaded it manually), just d
 
 ```bash
 cp my-region.osh.pbf ./data/
-docker compose run renderer render --bbox "-83.45,33.83,-83.37,33.90"
+docker compose run renderer render --bbox "-74.02,40.70,-73.90,40.85"
 ```
 
 ## CLI Reference
@@ -91,9 +94,9 @@ docker compose run renderer render --bbox "-83.45,33.83,-83.37,33.90"
 
 ```
 Options:
-  --bbox TEXT        Bounding box: west,south,east,north [default: Watkinsville, GA]
+  --bbox TEXT        Bounding box: west,south,east,north [default: Manhattan, NY]
   --start-date TEXT  Start date (YYYY-MM-DD) [default: 2008-01-01]
-  --end-date TEXT    End date (YYYY-MM-DD) [default: 2024-01-01]
+  --end-date TEXT    End date (YYYY-MM-DD) [default: 2026-01-01]
   --interval CHOICE  daily|weekly|monthly|quarterly|yearly [default: monthly]
   --zoom INT         Map zoom level [default: 13]
   --width INT        Frame width in pixels [default: 1920]
@@ -121,7 +124,7 @@ docker compose run renderer import --input /output/snapshot.osm.pbf
 
 # Render a single frame from the current DB state
 docker compose run renderer render-frame \
-  --bbox "-83.45,33.83,-83.37,33.90" \
+  --bbox "-74.02,40.70,-73.90,40.85" \
   --output /output/test_frame.png \
   --label "June 2020"
 
@@ -138,14 +141,12 @@ The pipeline is **fully resumable** — every intermediate artifact is cached:
 | Temporal snapshots | `./output/snapshots/` | Skipped if exists |
 | Rendered frames | `./output/frames/` | Skipped if exists |
 
-If a run is interrupted, just re-run the same command.
-
 ## Resource Requirements
 
 | Region Size | Date Range | Interval | Approx. Frames | Time Estimate |
 |-------------|-----------|----------|----------------|---------------|
-| Small town | 10 years | Monthly | ~120 | 2-6 hours |
-| Small town | 10 years | Yearly | ~10 | 15-30 min |
+| Urban area | 10 years | Monthly | ~120 | 2-6 hours |
+| Urban area | 10 years | Yearly | ~10 | 15-30 min |
 | City | 10 years | Quarterly | ~40 | 4-12 hours |
 
 **Disk space**: Depends on the Geofabrik region size (e.g., a US state is ~100MB-1GB) plus a few GB for the bounding box extract and frames.
@@ -167,7 +168,7 @@ OSMTimelapse/
 ├── pyproject.toml               # Python project (uv)
 ├── src/osm_timelapse/
 │   ├── cli.py                   # Click CLI
-│   ├── config.py                # Configuration (defaults to Watkinsville, GA)
+│   ├── config.py                # Configuration (defaults to Manhattan, NY)
 │   ├── dates.py                 # Date range generation
 │   ├── downloader.py            # Auto-download & region extraction
 │   ├── pipeline.py              # Core pipeline orchestration

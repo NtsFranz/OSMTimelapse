@@ -8,7 +8,7 @@
 #      export OSM_PASSWORD="your_password"
 #   2. docker compose build
 #   3. docker compose run renderer render
-#      (defaults to Watkinsville, GA — data downloads automatically)
+#      (defaults to Manhattan, NY — data downloads automatically)
 #
 #   Custom region:
 #   docker compose run renderer render --bbox "west,south,east,north"
@@ -74,5 +74,5 @@ services:
       - ./output:/output
     # Default: show help. Override with your command:
     #   docker compose run renderer render
-    #   docker compose run renderer render --bbox "-83.45,33.83,-83.37,33.90"
+    #   docker compose run renderer render --bbox "-74.02,40.70,-73.90,40.85"
     command: ["--help"]

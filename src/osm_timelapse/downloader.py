@@ -412,13 +412,6 @@ def ensure_history_data(
     target_bbox = BBox.from_string(bbox)
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if there's already a .osh.pbf file in data_dir
-    existing = list(data_dir.glob("*.osh.pbf"))
-    if existing:
-        # Use the first one found
-        log.info("Found existing history file: %s", existing[0])
-        return existing[0]
-
     # Look up the best Geofabrik region
     region = find_best_geofabrik_region(target_bbox, data_dir)
     history_url = region["urls"]["history"]
@@ -426,7 +419,17 @@ def ensure_history_data(
     region_filename = f"{region_id}.osh.pbf"
     region_file = data_dir / region_filename
 
-    if not region_file.exists():
+    # Check for both nested path (us/new-jersey.osh.pbf) and flat path (new-jersey.osh.pbf)
+    flat_file = data_dir / Path(region_filename).name
+    if not region_file.exists() and flat_file.exists():
+        log.info("Found history file in flat cache: %s", flat_file)
+        region_file = flat_file
+
+    # Check if file exists and is not empty (min 1MB for a history file)
+    if not region_file.exists() or region_file.stat().st_size < 1024 * 1024:
+        if region_file.exists():
+            log.warning("Existing history file is too small (corrupted?), re-downloading: %s", region_file)
+        
         # Authenticate and download
         log.info("=" * 60)
         log.info("Downloading history for: %s", region["name"])
@@ -447,11 +450,15 @@ def ensure_history_data(
     # Now extract just the requested bounding box
     import hashlib
     bbox_hash = hashlib.md5(bbox.encode()).hexdigest()[:8]
-    extract_file = data_dir / f"extract_{bbox_hash}.osh.pbf"
+    region_slug = region_id.replace("/", "_")
+    extract_file = data_dir / f"extract_{region_slug}_{bbox_hash}.osh.pbf"
 
-    if extract_file.exists():
-        log.info("Bounding box extract already exists: %s", extract_file)
+    if extract_file.exists() and extract_file.stat().st_size > 100000:
+        log.info("Bounding box extract already exists for region %s: %s", region_id, extract_file)
         return extract_file
+    
+    if extract_file.exists():
+        log.warning("Existing extract is too small, re-extracting: %s", extract_file)
 
     log.info("Extracting bounding box %s from %s...", bbox, region_filename)
     if shutil.which("osmium") is None:
