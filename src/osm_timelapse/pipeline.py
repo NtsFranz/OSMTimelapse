@@ -28,7 +28,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _run(cmd: list[str], *, check: bool = True, **kwargs) -> subprocess.CompletedProcess:
+def _run(
+    cmd: list[str], *, check: bool = True, **kwargs
+) -> subprocess.CompletedProcess:
     """Run a subprocess, logging the command."""
     log.info("Running: %s", " ".join(cmd))
     return subprocess.run(cmd, check=check, **kwargs)
@@ -82,10 +84,12 @@ def generate_snapshot(
 
     iso = format_iso(target_date)
     cmd = [
-        "osmium", "time-filter",
+        "osmium",
+        "time-filter",
         str(history_file),
         iso,
-        "-o", str(output_file),
+        "-o",
+        str(output_file),
         "--overwrite",
     ]
     _run(cmd)
@@ -131,15 +135,22 @@ def import_snapshot(cfg: RenderConfig, snapshot_file: Path) -> None:
 
     cmd = [
         "osm2pgsql",
-        "-O", "flex",
-        "-S", str(cfg.osm2pgsql_lua),
+        "-O",
+        "flex",
+        "-S",
+        str(cfg.osm2pgsql_lua),
         "--slim",
         "--drop",
-        "--host", cfg.db.host,
-        "--port", str(cfg.db.port),
-        "--username", cfg.db.user,
-        "--database", cfg.db.database,
-        "--number-processes", "1",
+        "--host",
+        cfg.db.host,
+        "--port",
+        str(cfg.db.port),
+        "--username",
+        cfg.db.user,
+        "--database",
+        cfg.db.database,
+        "--number-processes",
+        str(__import__("multiprocessing").cpu_count()),
         str(snapshot_file),
     ]
 
@@ -150,7 +161,7 @@ def import_snapshot(cfg: RenderConfig, snapshot_file: Path) -> None:
     log.info("Imported %s into PostGIS", snapshot_file)
 
     # Run post-import SQL indexes if they exist
-    # Note: For small regional extracts, building these indexes takes longer 
+    # Note: For small regional extracts, building these indexes takes longer
     # than the rendering speedup they provide. Skipping to save ~1s per frame.
     # indexes_sql = cfg.carto_style_dir / "indexes.sql"
     # if indexes_sql.exists():
@@ -161,11 +172,16 @@ def _run_psql_command(cfg: RenderConfig, sql_cmd: str) -> None:
     """Run a SQL command string against the PostGIS database."""
     cmd = [
         "psql",
-        "-h", cfg.db.host,
-        "-p", str(cfg.db.port),
-        "-U", cfg.db.user,
-        "-d", cfg.db.database,
-        "-c", sql_cmd,
+        "-h",
+        cfg.db.host,
+        "-p",
+        str(cfg.db.port),
+        "-U",
+        cfg.db.user,
+        "-d",
+        cfg.db.database,
+        "-c",
+        sql_cmd,
     ]
     env = dict(__import__("os").environ)
     env["PGPASSWORD"] = cfg.db.password
@@ -176,11 +192,16 @@ def _run_psql(cfg: RenderConfig, sql_file: Path) -> None:
     """Run a SQL file against the PostGIS database."""
     cmd = [
         "psql",
-        "-h", cfg.db.host,
-        "-p", str(cfg.db.port),
-        "-U", cfg.db.user,
-        "-d", cfg.db.database,
-        "-f", str(sql_file),
+        "-h",
+        cfg.db.host,
+        "-p",
+        str(cfg.db.port),
+        "-U",
+        cfg.db.user,
+        "-d",
+        cfg.db.database,
+        "-f",
+        str(sql_file),
     ]
     env = dict(__import__("os").environ)
     env["PGPASSWORD"] = cfg.db.password
@@ -241,8 +262,9 @@ def render_tiles(cfg: RenderConfig, m: "mapnik.Map", snapshot_date: date) -> Non
     from osm_timelapse.config import BBox
 
     snapshot_str = snapshot_date.isoformat()
-    # Number of tiles per side in a meta-tile block (e.g., 4x4 = 16 tiles)
-    META_SIZE = 4
+    # Number of tiles per side in a meta-tile block (e.g., 16x16 = 256 tiles)
+    # 16x16 is the maximum recommended size to balance DB efficiency and RAM usage.
+    META_SIZE = 16
 
     for zoom in cfg.tile_zooms:
         x1, y1 = lonlat_to_tile(cfg.bbox.west, cfg.bbox.north, zoom)
@@ -260,58 +282,73 @@ def render_tiles(cfg: RenderConfig, m: "mapnik.Map", snapshot_date: date) -> Non
                 needs_render = False
                 for x in range(mx, mx_end + 1):
                     for y in range(my, my_end + 1):
-                        tile_file = cfg.tiles_dir / snapshot_str / str(zoom) / str(x) / f"{y}.png"
+                        tile_file = (
+                            cfg.tiles_dir
+                            / snapshot_str
+                            / str(zoom)
+                            / str(x)
+                            / f"{y}.png"
+                        )
                         if not tile_file.exists():
                             needs_render = True
                             break
                     if needs_render:
                         break
-                
+
                 if not needs_render:
                     continue
 
                 # Calculate dimensions and bbox for the whole meta-tile
-                tiles_w = (mx_end - mx + 1)
-                tiles_h = (my_end - my + 1)
+                tiles_w = mx_end - mx + 1
+                tiles_h = my_end - my + 1
 
                 bbox_nw = tile_to_bbox(mx, my, zoom)
                 bbox_se = tile_to_bbox(mx_end, my_end, zoom)
-                
+
                 # Combine into a single meta-bbox
                 meta_bbox = BBox(
                     west=bbox_nw.west,
                     south=bbox_se.south,
                     east=bbox_se.east,
-                    north=bbox_nw.north
+                    north=bbox_nw.north,
                 )
                 envelope = bbox_to_mercator(meta_bbox)
 
                 m.resize(tiles_w * 256, tiles_h * 256)
-                m.zoom_to_box(mapnik.Box2d(envelope.xmin, envelope.ymin, envelope.xmax, envelope.ymax))
-                
-                # Render the large meta-tile
-                meta_img_path = cfg.output_dir / "meta_temp.png"
-                mapnik.render_to_file(m, str(meta_img_path), "png256")
-                
-                # Slice the meta-tile into individual tiles
-                with Image.open(meta_img_path) as meta_img:
-                    for x in range(mx, mx_end + 1):
-                        for y in range(my, my_end + 1):
-                            tile_dir = cfg.tiles_dir / snapshot_str / str(zoom) / str(x)
-                            tile_dir.mkdir(parents=True, exist_ok=True)
-                            tile_file = tile_dir / f"{y}.png"
-                            
-                            if tile_file.exists():
-                                continue
+                m.zoom_to_box(
+                    mapnik.Box2d(
+                        envelope.xmin, envelope.ymin, envelope.xmax, envelope.ymax
+                    )
+                )
 
-                            left = (x - mx) * 256
-                            top = (y - my) * 256
-                            tile_img = meta_img.crop((left, top, left + 256, top + 256))
-                            tile_img.save(tile_file, "PNG")
-                
-                # Cleanup temp file
-                if meta_img_path.exists():
-                    meta_img_path.unlink()
+                # Render to an in-memory image to avoid disk I/O
+                im = mapnik.Image(tiles_w * 256, tiles_h * 256)
+                mapnik.render(m, im)
+
+                # Convert mapnik image (RGBA) to PIL image
+                meta_img = Image.frombytes(
+                    "RGBA", (tiles_w * 256, tiles_h * 256), im.tostring()
+                )
+
+                # Slice the meta-tile into individual tiles
+                for x in range(mx, mx_end + 1):
+                    for y in range(my, my_end + 1):
+                        tile_dir = cfg.tiles_dir / snapshot_str / str(zoom) / str(x)
+                        tile_dir.mkdir(parents=True, exist_ok=True)
+                        tile_file = tile_dir / f"{y}.png"
+
+                        if tile_file.exists():
+                            continue
+
+                        # Crop and save
+                        left = (x - mx) * 256
+                        top = (y - my) * 256
+                        tile_img = meta_img.crop((left, top, left + 256, top + 256))
+
+                        # Convert to Paletted (png256) to save space, matching mapnik's output
+                        tile_img.convert("P", palette=Image.ADAPTIVE).save(
+                            tile_file, "PNG"
+                        )
 
 
 def save_tile_metadata(cfg: RenderConfig, snapshots: list[tuple[date, Path]]) -> None:
@@ -340,7 +377,9 @@ def add_watermark(image_path: Path, text: str) -> None:
     # Try to use a nice font, fall back to default
     font_size = max(20, img.height // 30)
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size
+        )
     except (OSError, IOError):
         font = ImageFont.load_default()
 
@@ -399,12 +438,18 @@ def assemble_video(cfg: RenderConfig) -> Path:
     cmd = [
         "ffmpeg",
         "-y",  # Overwrite output
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-vf", f"fps={cfg.fps}",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_file),
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-vf",
+        f"fps={cfg.fps}",
         str(cfg.output_video),
     ]
     _run(cmd)
@@ -420,19 +465,24 @@ def assemble_video(cfg: RenderConfig) -> Path:
 def setup_external_data(cfg: RenderConfig) -> None:
     """Download external shapefiles and load them into PostGIS."""
     log.info("Ensuring external shapefile data is loaded into PostGIS...")
-    
+
     cmd = [
         "python3",
         "/opt/openstreetmap-carto/scripts/get-external-data.py",
-        "-H", cfg.db.host,
-        "-p", str(cfg.db.port),
-        "-d", cfg.db.database,
-        "-U", cfg.db.user,
-        "-c", "/opt/openstreetmap-carto/external-data.yml",
+        "-H",
+        cfg.db.host,
+        "-p",
+        str(cfg.db.port),
+        "-d",
+        cfg.db.database,
+        "-U",
+        cfg.db.user,
+        "-c",
+        "/opt/openstreetmap-carto/external-data.yml",
     ]
     env = dict(__import__("os").environ)
     env["PGPASSWORD"] = cfg.db.password
-    
+
     # We run this inside /opt/openstreetmap-carto so it finds its data dir
     _run(cmd, env=env, cwd="/opt/openstreetmap-carto")
 
@@ -460,7 +510,9 @@ def run_full_pipeline(cfg: RenderConfig) -> Path:
     # Add file logging
     log_file = cfg.output_video.with_name(f"timelapse_{cfg.cache_key}.log")
     file_handler = logging.FileHandler(log_file)
-    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+    )
     logging.getLogger().addHandler(file_handler)
 
     log.info("=== OSM Timelapse Pipeline ===")
@@ -494,6 +546,7 @@ def run_full_pipeline(cfg: RenderConfig) -> Path:
 
     # Pre-load Mapnik map to save ~2 seconds of XML parsing per frame
     import mapnik
+
     width, height = cfg.width, cfg.height
     if width == 0 or height == 0:
         width, height = compute_pixel_dimensions(cfg.bbox, cfg.zoom)
@@ -503,7 +556,7 @@ def run_full_pipeline(cfg: RenderConfig) -> Path:
 
     for i, (d, snapshot_path) in enumerate(snapshots):
         frame_file = cfg.frames_dir / f"frame_{d.isoformat()}_{cache_key}.png"
-        
+
         # In animation mode, we can skip if the single frame already exists.
         # In tile mode, we enter the loop and let render_tiles handle per-tile caching.
         if cfg.mode == RenderMode.ANIMATION and frame_file.exists():

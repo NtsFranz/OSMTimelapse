@@ -24,6 +24,7 @@ def _setup_logging(verbose: bool) -> None:
 
 def _parse_center(ctx, param, value: str | None) -> tuple[float, float]:
     from osm_timelapse.config import DEFAULT_CENTER
+
     if value is None:
         return DEFAULT_CENTER
     parts = [float(x.strip()) for x in value.split(",")]
@@ -93,11 +94,28 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 @click.option("--width", type=int, default=1920, help="Frame width in pixels.")
 @click.option("--height", type=int, default=1080, help="Frame height in pixels.")
 @click.option("--fps", type=int, default=10, help="Frames per second in output video.")
-@click.option("--output", type=click.Path(), default=None, help="Output video path. If not provided, defaults to /output/timelapse_[params].mp4")
+@click.option(
+    "--output",
+    type=click.Path(),
+    default=None,
+    help="Output video path. If not provided, defaults to /output/timelapse_[params].mp4",
+)
 @click.option("--no-watermark", is_flag=True, help="Disable date watermark on frames.")
-@click.option("--tiles", is_flag=True, help="Render map tiles (XYZ) instead of animation.")
-@click.option("--tile-zooms", callback=_parse_zooms, default="13-16", help="Zoom range for tiles (e.g. 13-16).")
-@click.option("--data-dir", type=click.Path(), default="/data", help="Data directory for downloads and cache.")
+@click.option(
+    "--tiles", is_flag=True, help="Render map tiles (XYZ) instead of animation."
+)
+@click.option(
+    "--tile-zooms",
+    callback=_parse_zooms,
+    default="13-16",
+    help="Zoom range for tiles (e.g. 13-16).",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    default="/data",
+    help="Data directory for downloads and cache.",
+)
 def render(
     center: tuple[float, float],
     radius: float,
@@ -174,19 +192,22 @@ def download_cmd(center: tuple[float, float], radius: float, data_dir: str) -> N
 
 @cli.command("snapshot")
 @click.option(
-    "--input", "input_file",
+    "--input",
+    "input_file",
     type=click.Path(exists=True),
     required=True,
     help="Path to history .osh.pbf file.",
 )
 @click.option(
-    "--date", "target_date",
+    "--date",
+    "target_date",
     callback=_parse_date,
     required=True,
     help="Date to extract snapshot for (YYYY-MM-DD).",
 )
 @click.option(
-    "--output", "output_file",
+    "--output",
+    "output_file",
     type=click.Path(),
     required=True,
     help="Output .osm.pbf path.",
@@ -201,7 +222,8 @@ def snapshot_cmd(input_file: str, target_date: date, output_file: str) -> None:
 
 @cli.command("import")
 @click.option(
-    "--input", "input_file",
+    "--input",
+    "input_file",
     type=click.Path(exists=True),
     required=True,
     help="Path to .osm.pbf snapshot file.",
@@ -216,7 +238,9 @@ def import_cmd(input_file: str) -> None:
 
 
 @cli.command("render-frame")
-@click.option("--center", callback=_parse_center, default=None, help="Center point: lat,lon.")
+@click.option(
+    "--center", callback=_parse_center, default=None, help="Center point: lat,lon."
+)
 @click.option("--radius", type=float, default=2.0, help="Radius in km.")
 @click.option("--zoom", type=int, default=13, help="Zoom level.")
 @click.option("--width", type=int, default=1920, help="Frame width.")
@@ -235,7 +259,9 @@ def render_frame_cmd(
     """Render a single frame from the current PostGIS database state."""
     from osm_timelapse.pipeline import add_watermark, render_frame
 
-    cfg = RenderConfig(center=center, radius_km=radius, zoom=zoom, width=width, height=height)
+    cfg = RenderConfig(
+        center=center, radius_km=radius, zoom=zoom, width=width, height=height
+    )
     render_frame(cfg, Path(output))
     if label:
         add_watermark(Path(output), label)
@@ -250,7 +276,12 @@ def render_frame_cmd(
     help="Directory containing frame PNGs.",
 )
 @click.option("--fps", type=int, default=10, help="Frames per second.")
-@click.option("--output", type=click.Path(), default="/output/timelapse.mp4", help="Output video path.")
+@click.option(
+    "--output",
+    type=click.Path(),
+    default="/output/timelapse.mp4",
+    help="Output video path.",
+)
 def assemble_cmd(frames_dir: str, fps: int, output: str) -> None:
     """Assemble rendered frames into a timelapse video."""
     from osm_timelapse.pipeline import assemble_video

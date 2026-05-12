@@ -46,11 +46,12 @@ class BBox:
     @classmethod
     def from_center(cls, lat: float, lon: float, radius_km: float) -> BBox:
         import math
+
         # 1 degree of latitude is ~111.32 km
         lat_offset = radius_km / 111.32
         # 1 degree of longitude is ~111.32 km * cos(lat)
         lon_offset = radius_km / (111.32 * math.cos(math.radians(lat)))
-        
+
         return cls(
             west=lon - lon_offset,
             south=lat - lat_offset,
@@ -68,16 +69,12 @@ class DatabaseConfig:
     """PostGIS database connection settings."""
 
     host: str = field(default_factory=lambda: os.environ.get("PGHOST", "db"))
-    port: int = field(
-        default_factory=lambda: int(os.environ.get("PGPORT", "5432"))
-    )
+    port: int = field(default_factory=lambda: int(os.environ.get("PGPORT", "5432")))
     user: str = field(default_factory=lambda: os.environ.get("PGUSER", "renderer"))
     password: str = field(
         default_factory=lambda: os.environ.get("PGPASSWORD", "renderer")
     )
-    database: str = field(
-        default_factory=lambda: os.environ.get("PGDATABASE", "gis")
-    )
+    database: str = field(default_factory=lambda: os.environ.get("PGDATABASE", "gis"))
 
     @property
     def dsn(self) -> str:
@@ -143,16 +140,17 @@ class RenderConfig:
         self.bbox = BBox.from_center(self.center[0], self.center[1], self.radius_km)
         # Extract 1.5km extra in all directions to ensure perfect tiles at the edges
         # (Mapnik labels and icons need a buffer around the render area)
-        self.buffered_bbox = BBox.from_center(self.center[0], self.center[1], self.radius_km + 1.5)
-        
+        self.buffered_bbox = BBox.from_center(
+            self.center[0], self.center[1], self.radius_km + 1.5
+        )
+
         self.frames_dir = self.output_dir / "frames"
         self.snapshots_dir = self.output_dir / "snapshots" / self.location_key
         # Tiles are global (WGS84 XYZ) and can be shared across regions safely
         # because the buffered extraction ensures they are 'perfect'.
         self.tiles_dir = self.output_dir / "tiles"
-        
+
         self.frames_dir.mkdir(parents=True, exist_ok=True)
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
         self.tiles_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-

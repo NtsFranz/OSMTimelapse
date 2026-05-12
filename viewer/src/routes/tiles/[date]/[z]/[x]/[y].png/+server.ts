@@ -24,7 +24,7 @@ export const GET: RequestHandler = async ({ params }) => {
                 'Cache-Control': 'public, max-age=31536000'
             }
         });
-    } catch (e) {
+    } catch {
         throw error(500, 'Internal server error');
     }
 };
